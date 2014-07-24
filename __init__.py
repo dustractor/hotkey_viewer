@@ -44,23 +44,52 @@ def kmi_iter():
                 for kmi in km.keymap_items:
                     yield wm,kc,km,kmi
 
+
+def kmi_info(wm,kc,km,kmi):
+    return (
+            wm.name,
+            kc.name,
+            km.name,
+            kmi.name,
+            kmi.type,
+            kmi.ctrl,
+            kmi.alt,
+            kmi.shift,
+            kmi.oskey,
+            fmt_kmod(kmi),
+            fmt_kprop(kmi)
+        )
+    
+
+def fmt_kprop(kmi):
+    if kmi.properties:
+        return repr(kmi.properties.items()) 
+    else:
+        return repr(dict())
+
+def fmt_kmod(kmi):
+    kmod = "+".join(filter(lambda _:_, (
+        "ctrl" if kmi.ctrl else None,
+        "alt" if kmi.alt else None,
+        "shift" if kmi.shift else None,
+        "oskey" if kmi.oskey else None)))
+    if kmod:
+        return kmod
+    else:
+        return ""
+
+hkx_cols = "wm_name", "kc_name", "km_name", "name", "type", "ctrl", "alt", "shift", "oskey", "kmod", "kprop"
+
 def make_cx():
     global cx
+    qs = ",".join(["?" for _ in hkx_cols])
+    hkx_cols_str = ",".join(hkx_cols)
+    ddl = "create table hkx(%s);" % hkx_cols_str
+    insert = "insert into hkx(%s) values (%s)" % (hkx_cols_str,qs)
     cx = sqlite3.connect(":memory:")
-    cx.executescript("create table hkx( wm_name, kc_name, km_name, name, type, ctrl, alt, shift, oskey, disp );")
-    insert = "insert into hkx( wm_name,kc_name,km_name, name, type, ctrl, alt, shift, oskey, disp) values(?,?,?, ?,?,?, ?,?,?, ?)"
-
+    cx.executescript(ddl)
     for wm,kc,km,kmi in kmi_iter():
-        kdesc = kmi.value.title()
-        kmod = "+".join(filter(lambda _:_, ( "ctrl" if kmi.ctrl else None, "alt" if kmi.alt else None, "shift" if kmi.shift else None, "oskey" if kmi.oskey else None)))
-        if kmod:
-            kdesc += " " + kmod
-        kdesc += " " + " ".join(map(str.title,kmi.type.split("_")))
-        if kmi.properties:
-            kdesc += repr(kmi.properties.items()) 
-
-
-        cx.execute(insert,( wm.name, kc.name, km.name, kmi.name, kmi.type, kmi.ctrl, kmi.alt, kmi.shift, kmi.oskey,kdesc))
+        cx.execute(insert,kmi_info(wm,kc,km,kmi))
 
 
 def refresh(self,context):
@@ -172,18 +201,20 @@ class HKX_WITCH_PT_hkxpanel(bpy.types.Panel):
         hkx = context.window_manager.hkx
         layout = self.layout
         layout.separator()
-        
         layout.prop(hkx,"refresh",toggle=True,text="",icon="FILE_REFRESH")
         layout.prop(hkx,"ktype_view",expand=True)
-
         hkx.display(layout.box())
-
-
         if hkx.refresh:
             hkx.refresh = True
         if cx:
-            for (T,) in cx.execute("select disp from hkx where type=?",(hkx.ktype,)):
-                layout.label(T)
+            for kc_name,km_name,ktype,kmod,kprop,name in cx.execute("select kc_name,km_name,type,kmod,kprop,name from hkx where type=?",(hkx.ktype,)):
+                row = layout.row(align=True)
+                row.label(kc_name)
+                row.label(km_name)
+                row.label(ktype)
+                row.label(kmod)
+                row.label(kprop)
+                row.label(name)
 
 
 def register():
