@@ -18,24 +18,26 @@
 
 bl_info = {
         "name": "Hotkey Viewer",
-        "description":"Interactive Viewer for learning hotkeys.",
+        "description":"Provides a viewer for hotkeys.",
         "author":"dustractor",
-        "version":(0,1),
+        "version":(0,2),
         "blender":(2,65,0),
-        "location":"hkx:witch",
+        "location":"Bottom of input tab in user preferences.",
         "warning":"",
         "wiki_url":"",
         "category": "Development"
         }
 
+import re
 import sqlite3
 import bpy
+
 
 cx = None
 
 def enumtypes(proptype):
     for e in proptype.bl_rna.properties['type'].enum_items:
-        yield (e.identifier,e.name,e.identifier)
+        yield (e.identifier,e.name,e.description)
 
 def kmi_iter():
     for wm in bpy.data.window_managers:
@@ -44,12 +46,13 @@ def kmi_iter():
                 for kmi in km.keymap_items:
                     yield wm,kc,km,kmi
 
-
 def kmi_info(wm,kc,km,kmi):
     return (
             wm.name,
             kc.name,
             km.name,
+            km.space_type,
+            km.region_type,
             kmi.name,
             kmi.type,
             kmi.ctrl,
@@ -59,7 +62,6 @@ def kmi_info(wm,kc,km,kmi):
             fmt_kmod(kmi),
             fmt_kprop(kmi)
         )
-    
 
 def fmt_kprop(kmi):
     if kmi.properties:
@@ -78,7 +80,10 @@ def fmt_kmod(kmi):
     else:
         return ""
 
-hkx_cols = "wm_name", "kc_name", "km_name", "name", "type", "ctrl", "alt", "shift", "oskey", "kmod", "kprop"
+hkx_cols = "wm_name", "kc_name", "km_name", "km_stype","km_rtype","name", "type", "ctrl", "alt", "shift", "oskey", "kmod", "kprop"
+
+def regexpf(Y,X):
+    return not bool(X in set(Y.split()))
 
 def make_cx():
     global cx
@@ -87,10 +92,14 @@ def make_cx():
     ddl = "create table hkx(%s);" % hkx_cols_str
     insert = "insert into hkx(%s) values (%s)" % (hkx_cols_str,qs)
     cx = sqlite3.connect(":memory:")
+    cx.create_function("regexp",2,regexpf)
     cx.executescript(ddl)
     for wm,kc,km,kmi in kmi_iter():
         cx.execute(insert,kmi_info(wm,kc,km,kmi))
+    print(dir(km))
 
+region_types = list(enumtypes(bpy.types.Region))
+space_types = list(enumtypes(bpy.types.Space))
 
 def refresh(self,context):
     if self.refresh:
@@ -98,14 +107,17 @@ def refresh(self,context):
         self.refresh = False
 
 
-class hkxwitch(bpy.types.PropertyGroup):
+
+class HotkeyViewerProp(bpy.types.PropertyGroup):
     refresh = bpy.props.BoolProperty(default=True,update=refresh)
     ktype = bpy.props.StringProperty()
     ctrl = bpy.props.BoolProperty()
     alt = bpy.props.BoolProperty()
     shift = bpy.props.BoolProperty()
     oskey = bpy.props.BoolProperty()
-    rtype = bpy.props.EnumProperty(items=list(enumtypes(bpy.types.Region)))
+    rtype = bpy.props.EnumProperty(items=region_types,options={"ENUM_FLAG"})
+    stype = bpy.props.EnumProperty(items=space_types,options={"ENUM_FLAG"})
+
     ktype = bpy.props.EnumProperty(items=list(enumtypes(bpy.types.KeyMapItem)))
     ktype_view = bpy.props.EnumProperty(items=[(_,_,_) for _ in ("keyboard","numpad","mouse","ndof")])
     def numpad_display(self,layout):
@@ -155,7 +167,6 @@ class hkxwitch(bpy.types.PropertyGroup):
             row = col.row(align=True)
             for c in r:
                 row.prop_enum(self,'ktype',c)
-
     def keyboard_display(self,layout):
         col = layout.column(align=True)
         for r in [
@@ -190,27 +201,51 @@ class hkxwitch(bpy.types.PropertyGroup):
             'ndof':self.ndof_display
         }[self.ktype_view](layout)
 
-class HKX_WITCH_PT_hkxpanel(bpy.types.Panel):
-    bl_label = "hkx"
+class HOTKEYVIEWER_PT_hotkey_viewpane(bpy.types.Panel):
+    bl_label = "Hotkey Viewer"
     bl_space_type = "USER_PREFERENCES"
     bl_region_type = "WINDOW"
+
     @classmethod
     def poll(self,context):
         return context.user_preferences.active_section == "INPUT"
+
     def draw(self,context):
         hkx = context.window_manager.hkx
         layout = self.layout
         layout.separator()
         layout.prop(hkx,"refresh",toggle=True,text="",icon="FILE_REFRESH")
+        layout.separator()
+        box = layout.box()
+        box.label("Visibility filters for region and space type.")
+        box.label("(Use Shift+click to select multiple or toggle.)")
+        box.separator()
+        row = box.row()
+        row.label("Hide keymap items for keymaps with these region types:%s"%",".join(hkx.rtype))
+        row = box.row()
+        row.prop(hkx,"rtype")
+        box.separator()
+        row = box.row()
+        row.label("Hide keymap items for keymaps with these space types:%s"%",".join(hkx.stype))
+        row = box.row()
+        row.prop(hkx,"stype")
+        box.separator()
+        layout.separator()
+        layout.label("Change view for input type:")
         layout.prop(hkx,"ktype_view",expand=True)
         hkx.display(layout.box())
+        layout.separator()
         if hkx.refresh:
             hkx.refresh = True
         if cx:
-            for kc_name,km_name,ktype,kmod,kprop,name in cx.execute("select kc_name,km_name,type,kmod,kprop,name from hkx where type=?",(hkx.ktype,)):
+            select = "select kc_name,km_name,km_stype,km_rtype,type,kmod,kprop,name from hkx where type=? and km_stype regexp ? and km_rtype regexp ?"
+            for kmirow in cx.execute(select,(hkx.ktype," ".join(hkx.stype)," ".join(hkx.rtype))):
+                kc_name,km_name,km_stype,km_rtype,ktype,kmod,kprop,name = kmirow
                 row = layout.row(align=True)
                 row.label(kc_name)
                 row.label(km_name)
+                row.label(km_stype)
+                row.label(km_rtype)
                 row.label(ktype)
                 row.label(kmod)
                 row.label(kprop)
@@ -219,7 +254,7 @@ class HKX_WITCH_PT_hkxpanel(bpy.types.Panel):
 
 def register():
     bpy.utils.register_module(__name__)
-    bpy.types.WindowManager.hkx = bpy.props.PointerProperty(type=hkxwitch)
+    bpy.types.WindowManager.hkx = bpy.props.PointerProperty(type=HotkeyViewerProp)
 
 def unregister():
     bpy.utils.unregister_module(__name__)
