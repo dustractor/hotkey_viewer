@@ -79,7 +79,21 @@ def fmt_kmod(kmi):
     else:
         return ""
 
-hkx_cols = "wm_name", "kc_name", "km_name", "km_stype","km_rtype","name", "type", "ctrl", "alt", "shift", "oskey", "kmod", "kprop"
+hkx_cols = (
+        "wm_name",
+        "kc_name",
+        "km_name",
+        "km_stype",
+        "km_rtype",
+        "name",
+        "type",
+        "ctrl",
+        "alt",
+        "shift",
+        "oskey",
+        "kmod",
+        "kprop"
+    )
 
 def regexpf(Y,X):
     return bool(X in set(Y.split()))
@@ -113,11 +127,17 @@ class HotkeyViewerProp(bpy.types.PropertyGroup):
     alt: bpy.props.BoolProperty()
     shift: bpy.props.BoolProperty()
     oskey: bpy.props.BoolProperty()
-    rtype: bpy.props.EnumProperty(items=region_types,options={"ENUM_FLAG"})
-    stype: bpy.props.EnumProperty(items=space_types,options={"ENUM_FLAG"})
-
-    ktype: bpy.props.EnumProperty(items=list(enumtypes(bpy.types.KeyMapItem)))
-    ktype_view: bpy.props.EnumProperty(items=[(_,_,_) for _ in ("keyboard","numpad","mouse","ndof")])
+    rtype: bpy.props.EnumProperty(
+        description="region type. use shift to select multiple",
+        items=region_types,default={"WINDOW"},options={"ENUM_FLAG"})
+    stype: bpy.props.EnumProperty(
+        description="space type. use shift to select multiple",
+        items=space_types,default={"EMPTY"},options={"ENUM_FLAG"})
+    ktype: bpy.props.EnumProperty(
+        description="key type",
+        items=list(enumtypes(bpy.types.KeyMapItem)),default="A")
+    ktype_view: bpy.props.EnumProperty(
+        items=[(_,_,_) for _ in ("keyboard","numpad","mouse","ndof")],default="keyboard")
     def numpad_display(self,layout):
         R = layout.row(align=True)
         col = R.column(align=True)
@@ -204,28 +224,24 @@ class HOTKEYVIEWER_PT_hotkey_viewpane(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "hotkeys"
+    def draw_header(self,context):
+        hkx = context.window_manager.hkx
+        layout = self.layout
+        layout.prop(hkx,"refresh",toggle=True,text="",icon="FILE_REFRESH")
 
 
     def draw(self,context):
         hkx = context.window_manager.hkx
         layout = self.layout
-        layout.separator()
-        layout.prop(hkx,"refresh",toggle=True,text="",icon="FILE_REFRESH")
-        layout.separator()
         box = layout.box()
-        box.label(text="Visibility filters for region and space type.")
-        box.label(text="(Use Shift+click to select multiple or toggle.)")
-        box.separator()
         row = box.row()
-        row.label(text="Show keymap items for keymaps with these region types:%s"%",".join(hkx.rtype))
+        row.label(text="Region Type:%s"%",".join(hkx.rtype))
         row = box.row()
         row.prop(hkx,"rtype")
-        box.separator()
         row = box.row()
-        row.label(text="Show keymap items for keymaps with these space types:%s"%",".join(hkx.stype))
+        row.label(text="Space Type:%s"%",".join(hkx.stype))
         row = box.row()
         row.prop(hkx,"stype")
-        box.separator()
         layout.separator()
         layout.label(text="Change view for input type:")
         layout.prop(hkx,"ktype_view",expand=True)
